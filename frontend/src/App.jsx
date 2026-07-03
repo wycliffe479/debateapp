@@ -7,7 +7,14 @@ export default function App() {
     return localStorage.getItem('agora_username') || '';
   });
   const [activeRoomId, setActiveRoomId] = useState(null);
-  
+
+  // Backend URL — reads from Vite env at build time, falls back to localhost for dev
+  const backendHttp = import.meta.env.VITE_BACKEND_WS_URL
+    ? import.meta.env.VITE_BACKEND_WS_URL.replace('wss://', 'https://').replace('ws://', 'http://')
+    : `http://${window.location.hostname}:5000`;
+  const backendWs = import.meta.env.VITE_BACKEND_WS_URL
+    || `ws://${window.location.hostname}:5000`;
+
   // Lobby states
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,7 +24,7 @@ export default function App() {
   // Fetch active rooms from backend API
   const fetchRooms = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/rooms');
+      const res = await fetch(`${backendHttp}/api/rooms`);
       if (res.ok) {
         const data = await res.json();
         setRooms(data);
@@ -51,7 +58,7 @@ export default function App() {
     if (!newTopic.trim() || !username) return;
 
     try {
-      const socket = new WebSocket('ws://localhost:5000');
+      const socket = new WebSocket(backendWs);
       socket.onopen = () => {
         socket.send(JSON.stringify({
           event: 'create_room',
