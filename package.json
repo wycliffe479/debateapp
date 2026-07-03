@@ -1,0 +1,14 @@
+{
+  "name": "agora-debate-app",
+  "version": "1.0.0",
+  "description": "Agora — AI-Moderated Debate Visualization App",
+  "scripts": {
+    "install:all": "npm.cmd install --legacy-peer-deps && npm.cmd install --prefix backend --legacy-peer-deps && npm.cmd install --prefix frontend --legacy-peer-deps",
+    "dev": "concurrently \"npm.cmd run dev --prefix backend\" \"npm.cmd run dev --prefix frontend\"",
+    "build": "npm install --prefix frontend --legacy-peer-deps && npm run build --prefix frontend && npm install --prefix backend",
+    "start": "node backend/server.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
