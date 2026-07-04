@@ -88,7 +88,7 @@ export default function DebateRoom({ roomId, username, onLeave }) {
 
       ws.onmessage = (event) => {
         const { event: evType, data } = JSON.parse(event.data);
-
+        switch(evType){
           case 'room_joined':
             setRoom(data);
             // Ensure subtrees map exists
