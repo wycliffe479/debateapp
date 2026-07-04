@@ -85,7 +85,9 @@ Perform the following analysis:
    - "concession": Agreeing with or acknowledging a point made by the other side.
 2. Check for common logical fallacies: ad hominem, strawman, false dilemma, slippery slope, appeal to emotion, whataboutism, circular reasoning, hasty generalization, appeal to authority (misused). List any detected fallacies with a brief, clear, and non-shaming explanation. Also include a constructive, fallacy-free "rephrase_suggestion" to help the user express their core argument productively.
 3. Extract any verifiable factual or statistical claim made. If the statement is just an opinion, value judgment, or pure logic, set this to null. Keep it short (e.g. "Germany produced 50% of its power from solar in 2023").
-4. Canonical Matching: Look at the existing debate nodes. If this message is referencing, repeating, or directly confirming/challenging the exact same underlying fact/claim as an existing node, return that node's canonical_concept_id so we can group them in the Knowledge Graph. If it is a completely new concept, return null.`;
+4. Canonical Matching: Look at the existing debate nodes. If this message is referencing, repeating, or directly confirming/challenging the exact same underlying fact/claim as an existing node, return that node's canonical_concept_id so we can group them in the Knowledge Graph. If it is a completely new concept, return null.
+5. Subtopic Detection: If this message takes the debate noticeably deeper into a specific sub-issue (e.g. the main debate is "remote work vs office" and this message focuses specifically on "childcare and remote work"), set detected_subtopic to true and provide a short subtopic_label (3-6 words). Otherwise set both to false/null.
+6. Reply Detection: Look at the existing debate nodes. If this message is most directly responding to, rebutting, or building on a specific previous message, return that node's id as reply_to_node_id. If it is a standalone new point, return null.`;
 
   const promptText = `
 --- DEBATE TOPIC ---
@@ -125,16 +127,13 @@ Analyze this message according to the rules and return the results in the requir
           required: ['type', 'explanation', 'rephrase_suggestion']
         }
       },
-      extracted_claim: {
-        type: 'STRING',
-        nullable: true
-      },
-      canonical_concept_match: {
-        type: 'STRING',
-        nullable: true
-      }
+      extracted_claim: { type: 'STRING', nullable: true },
+      canonical_concept_match: { type: 'STRING', nullable: true },
+      detected_subtopic: { type: 'BOOLEAN' },
+      subtopic_label: { type: 'STRING', nullable: true },
+      reply_to_node_id: { type: 'STRING', nullable: true }
     },
-    required: ['type', 'fallacies', 'extracted_claim', 'canonical_concept_match']
+    required: ['type', 'fallacies', 'extracted_claim', 'canonical_concept_match', 'detected_subtopic', 'subtopic_label', 'reply_to_node_id']
   };
 
   try {
@@ -171,11 +170,9 @@ Analyze this message according to the rules and return the results in the requir
       }
 
       // Claim extraction: look for numbers or statistics
-      // Send a clean version of the message as a search query (no prefix garbage)
       let extracted_claim = null;
       const numMatch = messageText.match(/\b\d+(\.\d+)?%?\b/);
       if (numMatch) {
-        // Use the raw message text, trimmed and capped — DO NOT prepend "Verify claim:"
         extracted_claim = messageText.trim().length > 120
           ? messageText.trim().substring(0, 120)
           : messageText.trim();
@@ -184,23 +181,36 @@ Analyze this message according to the rules and return the results in the requir
       // Canonical match: look for matching concepts
       let canonical_concept_match = null;
       if (existingNodes.length > 0) {
-        // Match if they share a unique key concept word
         const words = lowerText.split(/\s+/).filter(w => w.length > 5);
         for (const node of existingNodes) {
           const nodeText = node.text.toLowerCase();
-          const match = words.some(w => nodeText.includes(w));
-          if (match) {
+          if (words.some(w => nodeText.includes(w))) {
             canonical_concept_match = node.canonical_concept_id;
             break;
           }
         }
       }
 
+      // Subtopic detection: heuristic — long message with specific keywords
+      const subtopicKeywords = ['specifically', 'particularly', 'in terms of', 'regarding', 'when it comes to', 'focus on', 'especially'];
+      const detected_subtopic = lowerText.length > 80 && subtopicKeywords.some(k => lowerText.includes(k));
+      const subtopic_label = detected_subtopic ? messageText.split(/[,.!?]/)[0].trim().substring(0, 40) : null;
+
+      // Reply detection: find the most recent node from a different author
+      let reply_to_node_id = null;
+      if (existingNodes.length > 0) {
+        const others = existingNodes.filter(n => n.author !== authorName);
+        if (others.length > 0) reply_to_node_id = others[others.length - 1].id;
+      }
+
       return {
         type,
         fallacies,
         extracted_claim,
-        canonical_concept_match
+        canonical_concept_match,
+        detected_subtopic,
+        subtopic_label,
+        reply_to_node_id
       };
     }
 

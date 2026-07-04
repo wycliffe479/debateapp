@@ -152,89 +152,65 @@ async function runAsyncPipeline(roomId, nodeId) {
   const node = room.nodes.find(n => n.id === nodeId);
   if (!node) return;
 
-  console.log(`[Pipeline] Ingestion completed. Starting async pipeline for node: ${nodeId}`);
+  console.log(`[Pipeline] Starting async analysis for node: ${nodeId}`);
 
   try {
-    // 1. Structured Gemini parsing (Node classification, Fallacies, Claim extraction, Canonical match)
-    const analysis = await parseMessage(node.text, node.author, room.topic, room.nodes.filter(n => n.id !== nodeId));
-    console.log(`[Pipeline] AI Parsing result for node ${nodeId}:`, JSON.stringify(analysis));
+    const analysis = await parseMessage(
+      node.text, node.author, room.topic,
+      room.nodes.filter(n => n.id !== nodeId)
+    );
+    console.log(`[Pipeline] AI result for node ${nodeId}:`, JSON.stringify(analysis));
 
-    // Update node properties based on classification
+    // Core classification
     node.type = analysis.type || node.type;
-    
-    // Group canonical concepts
     if (analysis.canonical_concept_match) {
       node.canonical_concept_id = analysis.canonical_concept_match;
     }
-
-    // Apply logical fallacies if found
-    if (analysis.fallacies && analysis.fallacies.length > 0) {
+    if (analysis.fallacies?.length > 0) {
       node.fallacy_flags = analysis.fallacies;
-      // Triggers fallacy badge updates in room state immediately
-      console.log(`[Pipeline] Fallacy detected on node ${nodeId}:`, analysis.fallacies);
-      
-      // Notify sender privately with a rephrasing nudge
       sendPrivate(roomId, node.author, 'fallacy_nudge', {
-        nodeId: node.id,
-        text: node.text,
-        fallacies: analysis.fallacies
+        nodeId: node.id, text: node.text, fallacies: analysis.fallacies
       });
     }
 
-    // Recalculate clash state immediately after classification/fallacy check
-    recalculateDebateClashes(roomId);
-    
-    // Broadcast the initial update (type, fallacies)
-    broadcastToRoom(roomId, 'node_updated', node);
-    broadcastToRoom(roomId, 'edges_updated', room.edges);
+    // New natural-chat fields
+    node.detected_subtopic    = analysis.detected_subtopic  || false;
+    node.subtopic_label       = analysis.subtopic_label     || null;
+    node.contains_factual_claim = !!analysis.extracted_claim;
+    node.extracted_claim      = analysis.extracted_claim    || null;
 
-    // 2. Fact-Checking Phase
-    if (analysis.extracted_claim) {
-      console.log(`[Pipeline] Extracted claim to check: "${analysis.extracted_claim}"`);
-      
-      // Set status to checking
-      node.fact_status = 'checking';
-      broadcastToRoom(roomId, 'node_updated', node);
-
-      try {
-        // Run web search
-        const searchResults = await searchWeb(analysis.extracted_claim);
-        
-        // Query Gemini to synthesize verdict
-        const verification = await verifyClaim(analysis.extracted_claim, searchResults);
-        console.log(`[Pipeline] Fact-check verdict for node ${nodeId}:`, JSON.stringify(verification));
-
-        node.fact_status = verification.verdict;
-        node.sources = searchResults;
-        // Prepend fact check reasoning to explain border color
-        node.fact_explanation = verification.explanation;
-
-      } catch (searchError) {
-        console.error(`[Pipeline] Fact-checking search/verdict failed for node ${nodeId}:`, searchError.message);
-        // Fail loudly on UI
-        node.fact_status = 'failed';
-        node.fact_explanation = `Fact check failed: ${searchError.message}`;
+    // Auto-create graph edge if AI detected a reply relationship
+    let newEdge = null;
+    if (analysis.reply_to_node_id) {
+      const targetNode = room.nodes.find(n => n.id === analysis.reply_to_node_id);
+      const alreadyLinked = room.edges.some(
+        e => e.from === nodeId && e.to === analysis.reply_to_node_id
+      );
+      if (targetNode && !alreadyLinked) {
+        const relationType =
+          node.type === 'rebuttal'  ? 'attacks'  :
+          node.type === 'evidence'  ? 'supports' :
+          node.type === 'question'  ? 'questions': 'supports';
+        newEdge = {
+          id: `edge_${nodeId}_${analysis.reply_to_node_id}`,
+          from: nodeId,
+          to: analysis.reply_to_node_id,
+          relation_type: relationType,
+          resolved: false,
+          winner_node_id: null
+        };
+        room.edges.push(newEdge);
       }
-
-      // Recalculate all node strengths and edge resolution states
-      recalculateDebateClashes(roomId);
-
-      // Broadcast results
-      broadcastToRoom(roomId, 'node_updated', node);
-      broadcastToRoom(roomId, 'edges_updated', room.edges);
-      broadcastToRoom(roomId, 'fact_check_alert', {
-        nodeId: node.id,
-        claim: analysis.extracted_claim,
-        verdict: node.fact_status,
-        explanation: node.fact_explanation,
-        sources: node.sources
-      });
     }
 
+    recalculateDebateClashes(roomId);
+    broadcastToRoom(roomId, 'node_updated', node);
+    if (newEdge) broadcastToRoom(roomId, 'new_edge', newEdge);
+    broadcastToRoom(roomId, 'edges_updated', room.edges);
     persistRoom(roomId);
 
   } catch (err) {
-    console.error(`[Pipeline] General error in async pipeline for node ${nodeId}:`, err);
+    console.error(`[Pipeline] Error for node ${nodeId}:`, err);
   }
 }
 
@@ -261,12 +237,13 @@ wss.on('connection', (ws) => {
           const roomId = `room_${Date.now()}`;
           rooms[roomId] = {
             id: roomId,
-            topic: topic,
-            mode: mode || 'free', // 'free' or 'structured'
+            topic,
+            mode: mode || 'free',
             participants: [],
             messages: [],
             nodes: [],
-            edges: []
+            edges: [],
+            subtrees: {}         // subtree chats keyed by subtreeId
           };
           console.log(`Room created: ${roomId} with topic: "${topic}"`);
           persistRoom(roomId);
@@ -300,69 +277,43 @@ wss.on('connection', (ws) => {
         }
 
         case 'chat_message': {
-          const { roomId, username, text, replyToNodeId, relationType, msgType } = data;
+          // Natural free-form chat — AI determines type and connections
+          const { roomId, username, text } = data;
           const room = rooms[roomId];
           if (!room) return;
 
-          // Find this author's chain parent (last node they posted)
+          // Track chain parent (last node this author posted)
           const authorNodes = room.nodes.filter(n => n.author === username);
           const chainParentId = authorNodes.length > 0 ? authorNodes[authorNodes.length - 1].id : null;
-
-          // Use client-supplied msgType if present; fall back to guessing from context
-          const nodeType = msgType && msgType !== 'subtree'
-            ? msgType
-            : (replyToNodeId ? 'rebuttal' : 'claim');
 
           const nodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
           const newNode = {
             id: nodeId,
             author: username,
-            text: text,
-            type: nodeType,
+            text,
+            type: 'claim',           // AI will update
             fact_status: 'unverified',
             sources: [],
             fallacy_flags: [],
             strength_score: 1.0,
             canonical_concept_id: nodeId,
-            chain_parent_id: msgType === 'subtree' ? null : chainParentId, // subtree = new root
-            timestamp: Date.now()
+            chain_parent_id: chainParentId,
+            timestamp: Date.now(),
+            // AI-populated fields (set after pipeline runs)
+            detected_subtopic: false,
+            subtopic_label: null,
+            contains_factual_claim: false,
+            extracted_claim: null,
+            conceded: false
           };
 
           room.nodes.push(newNode);
+          room.messages.push({ id: nodeId, author: username, text, timestamp: Date.now() });
 
-          // Add cross-edge or support edge if replying to a node
-          let newEdge = null;
-          if (replyToNodeId) {
-            const relationship = relationType || 'rebuts'; // default to rebuts/attacks
-            newEdge = {
-              id: `edge_${nodeId}_${replyToNodeId}`,
-              from: nodeId,
-              to: replyToNodeId,
-              relation_type: relationship === 'rebuts' ? 'attacks' : relationship, // standardizes rebuttal as "attacks" for battle dynamics
-              resolved: false,
-              winner_node_id: null
-            };
-            room.edges.push(newEdge);
-          }
-
-          // Add to simple messages log
-          room.messages.push({
-            id: nodeId,
-            author: username,
-            text: text,
-            timestamp: Date.now()
-          });
-
-          // Save room state
           persistRoom(roomId);
-
-          // Immediately broadcast the new state elements
           broadcastToRoom(roomId, 'new_node', newNode);
-          if (newEdge) {
-            broadcastToRoom(roomId, 'new_edge', newEdge);
-          }
 
-          // Run background async moderation tasks
+          // AI analysis runs in background — updates node type, edges, flags
           runAsyncPipeline(roomId, nodeId);
           break;
         }
@@ -377,21 +328,148 @@ wss.on('connection', (ws) => {
 
           console.log(`User rephrased node ${nodeId} to: "${newText}"`);
           node.text = newText;
-          node.fallacy_flags = []; // clear fallacies for re-evaluation
-          node.fact_status = 'unverified'; // reset fact verification
+          node.fallacy_flags = [];
+          node.fact_status = 'unverified';
+          node.extracted_claim = null;
+          node.contains_factual_claim = false;
 
-          // Update message log
           const msg = room.messages.find(m => m.id === nodeId);
           if (msg) msg.text = newText;
 
           recalculateDebateClashes(roomId);
-
           broadcastToRoom(roomId, 'node_updated', node);
-          
-          // Re-trigger async pipeline for the new text
           runAsyncPipeline(roomId, nodeId);
           break;
         }
+
+        case 'concede_claim': {
+          const { roomId, nodeId } = data;
+          const room = rooms[roomId];
+          if (!room) return;
+          const node = room.nodes.find(n => n.id === nodeId);
+          if (!node) return;
+
+          node.conceded = true;
+          node.strength_score = 0;
+          console.log(`[Concede] ${node.author} conceded node: ${nodeId}`);
+
+          const snippet = node.text.length > 80 ? node.text.substring(0, 80) + '...' : node.text;
+          const aiMsg = {
+            id: `ai_${Date.now()}`,
+            author: 'Agora AI',
+            text: `🏳️ **${node.author}** has conceded the point: *"${snippet}"*. This argument has been retired from the debate.`,
+            timestamp: Date.now(),
+            isAI: true,
+            aiType: 'concession'
+          };
+          room.messages.push(aiMsg);
+
+          recalculateDebateClashes(roomId);
+          persistRoom(roomId);
+
+          broadcastToRoom(roomId, 'node_updated', node);
+          broadcastToRoom(roomId, 'new_ai_message', aiMsg);
+          broadcastToRoom(roomId, 'edges_updated', room.edges);
+          break;
+        }
+
+        case 'fact_check_request': {
+          // Manual fact-check triggered by user clicking 🔍
+          const { roomId, nodeId, claim } = data;
+          const room = rooms[roomId];
+          if (!room) return;
+          const node = room.nodes.find(n => n.id === nodeId);
+          if (!node || !claim) return;
+
+          node.fact_status = 'checking';
+          broadcastToRoom(roomId, 'node_updated', node);
+
+          // Run search + verify asynchronously
+          (async () => {
+            try {
+              const searchResults = await searchWeb(claim);
+              const verification = await verifyClaim(claim, searchResults);
+
+              node.fact_status = verification.verdict;
+              node.sources = searchResults;
+              node.fact_explanation = verification.explanation;
+
+              const verdictEmoji =
+                verification.verdict === 'true' ? '✅' :
+                verification.verdict === 'false' ? '❌' :
+                verification.verdict === 'partially_true' ? '⚠️' : '❓';
+
+              const verdictLabel = verification.verdict.replace(/_/g, ' ').toUpperCase();
+              const claimSnippet = claim.length > 100 ? claim.substring(0, 100) + '...' : claim;
+
+              const aiMsg = {
+                id: `ai_${Date.now()}`,
+                author: 'Agora AI',
+                text: `${verdictEmoji} **FACT CHECK** — *"${claimSnippet}"*\n\n**Verdict: ${verdictLabel}**\n\n${verification.explanation}`,
+                timestamp: Date.now(),
+                isAI: true,
+                aiType: 'fact_check',
+                verdict: verification.verdict,
+                nodeId,
+                sources: searchResults
+              };
+              room.messages.push(aiMsg);
+
+              recalculateDebateClashes(roomId);
+              persistRoom(roomId);
+
+              broadcastToRoom(roomId, 'node_updated', node);
+              broadcastToRoom(roomId, 'new_ai_message', aiMsg);
+              broadcastToRoom(roomId, 'edges_updated', room.edges);
+            } catch (err) {
+              console.error('[FactCheck] Error:', err.message);
+              node.fact_status = 'failed';
+              node.fact_explanation = `Fact check failed: ${err.message}`;
+              broadcastToRoom(roomId, 'node_updated', node);
+            }
+          })();
+          break;
+        }
+
+        case 'open_subtree': {
+          // Opens a scoped sub-chat for a subtopic — broadcast to ALL room clients
+          const { roomId, parentNodeId, label } = data;
+          const room = rooms[roomId];
+          if (!room) return;
+
+          if (!room.subtrees) room.subtrees = {};
+
+          const subtreeId = `subtree_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const subtree = {
+            id: subtreeId,
+            label: label || 'Subtopic Discussion',
+            parentNodeId,
+            messages: [],
+            createdAt: Date.now(),
+            createdBy: ws.username
+          };
+          room.subtrees[subtreeId] = subtree;
+
+          persistRoom(roomId);
+          // Broadcast to EVERY connected client in the room
+          broadcastToRoom(roomId, 'subtree_created', subtree);
+          break;
+        }
+
+        case 'subtree_message': {
+          const { roomId, subtreeId, username, text } = data;
+          const room = rooms[roomId];
+          if (!room || !room.subtrees?.[subtreeId]) return;
+
+          const msgId = `stmsg_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+          const msg = { id: msgId, author: username, text, timestamp: Date.now() };
+          room.subtrees[subtreeId].messages.push(msg);
+
+          persistRoom(roomId);
+          broadcastToRoom(roomId, 'subtree_message_received', { subtreeId, message: msg });
+          break;
+        }
+
 
         case 'request_summary': {
           const { roomId } = data;

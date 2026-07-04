@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Shield, Sparkles, MessageSquare, ArrowLeft, Loader, ExternalLink, X, BookOpen, WifiOff, Wifi } from 'lucide-react';
 import GraphContainer from './GraphContainer';
 import ChatPanel from './ChatPanel';
+import SubtreePanel from './SubtreePanel';
 import FactCheckTicker from './FactCheckTicker';
 import Dashboard from './Dashboard';
 import NudgeModal from './NudgeModal';
@@ -9,6 +10,7 @@ import NudgeModal from './NudgeModal';
 export default function DebateRoom({ roomId, username, onLeave }) {
   const [room, setRoom] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [activeSubtree, setActiveSubtree] = useState(null); // subtreeId | null
 
   // Rephrase Nudge Modal
   const [nudgeData, setNudgeData] = useState(null);
@@ -87,8 +89,11 @@ export default function DebateRoom({ roomId, username, onLeave }) {
       ws.onmessage = (event) => {
         const { event: evType, data } = JSON.parse(event.data);
 
-        switch (evType) {
-          case 'room_joined':    setRoom(data); break;
+          case 'room_joined':
+            setRoom(data);
+            // Ensure subtrees map exists
+            if (!data.subtrees) setRoom(r => r ? { ...r, subtrees: {} } : null);
+            break;
 
           case 'user_joined':
             setRoom(prev => prev ? { ...prev, participants: data.participants } : null);
@@ -118,6 +123,41 @@ export default function DebateRoom({ roomId, username, onLeave }) {
 
           case 'edges_updated':
             setRoom(prev => prev ? { ...prev, edges: data } : null);
+            break;
+
+          // AI moderator messages (fact check verdict, concession acknowledgement)
+          case 'new_ai_message':
+            setRoom(prev => {
+              if (!prev) return null;
+              if (prev.messages.some(m => m.id === data.id)) return prev;
+              return { ...prev, messages: [...prev.messages, data] };
+            });
+            break;
+
+          // Subtree created — broadcast to all clients in room
+          case 'subtree_created':
+            setRoom(prev => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                subtrees: { ...(prev.subtrees || {}), [data.id]: data }
+              };
+            });
+            break;
+
+          // Message posted inside a subtree
+          case 'subtree_message_received':
+            setRoom(prev => {
+              if (!prev) return null;
+              const subtrees = { ...(prev.subtrees || {}) };
+              if (subtrees[data.subtreeId]) {
+                subtrees[data.subtreeId] = {
+                  ...subtrees[data.subtreeId],
+                  messages: [...subtrees[data.subtreeId].messages, data.message]
+                };
+              }
+              return { ...prev, subtrees };
+            });
             break;
 
           case 'fallacy_nudge':
@@ -172,31 +212,51 @@ export default function DebateRoom({ roomId, username, onLeave }) {
 
 
   // ── Callbacks ────────────────────────────────────────────────────────────
-  const handleSendMessage = (text, replyToNodeId, relationType, msgType) => {
+  const send = (event, data) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        event: 'chat_message',
-        data: { roomId, username, text, replyToNodeId, relationType, msgType }
-      }));
+      wsRef.current.send(JSON.stringify({ event, data }));
     }
   };
 
-  const handleRephraseMessage = (nodeId, newText) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        event: 'rephrase_message',
-        data: { roomId, nodeId, newText }
-      }));
+  const handleSendMessage = (text) =>
+    send('chat_message', { roomId, username, text });
+
+  const handleConcedeNode = (nodeId) =>
+    send('concede_claim', { roomId, nodeId });
+
+  const handleFactCheck = (nodeId, claim) =>
+    send('fact_check_request', { roomId, nodeId, claim });
+
+  const handleOpenSubtree = (parentNodeId, label) => {
+    send('open_subtree', { roomId, parentNodeId, label });
+  };
+
+  // Auto-navigate into a subtree when the current user creates one
+  const prevSubtreesRef = useRef({});
+  useEffect(() => {
+    if (!room?.subtrees) return;
+    const prev = prevSubtreesRef.current;
+    const newIds = Object.keys(room.subtrees).filter(id => !prev[id]);
+    for (const id of newIds) {
+      if (room.subtrees[id].createdBy === username) {
+        setActiveSubtree(id); // creator jumps in automatically
+        break;
+      }
     }
+    prevSubtreesRef.current = room.subtrees;
+  }, [room?.subtrees, username]);
+
+  const handleSubtreeMessage = (subtreeId, text) =>
+    send('subtree_message', { roomId, subtreeId, username, text });
+
+  const handleRephraseMessage = (nodeId, newText) => {
+    send('rephrase_message', { roomId, nodeId, newText });
     setIsNudgeOpen(false);
     setNudgeData(null);
   };
 
-  const handleRequestSummary = () => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ event: 'request_summary', data: { roomId } }));
-    }
-  };
+  const handleRequestSummary = () =>
+    send('request_summary', { roomId });
 
   if (!room && connState === 'connecting') {
     return (
@@ -326,13 +386,30 @@ export default function DebateRoom({ roomId, username, onLeave }) {
           }} />
         </div>
 
-        {/* Right: Chat + Ticker */}
+        {/* Right: Chat or Subtree Panel + Ticker */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, minWidth: 0, padding: '0 0 0 8px' }}>
-          <ChatPanel
-            room={room}
-            currentUser={username}
-            onSendMessage={handleSendMessage}
-          />
+          {activeSubtree && room?.subtrees?.[activeSubtree] ? (
+            <SubtreePanel
+              subtree={room.subtrees[activeSubtree]}
+              currentUser={username}
+              onSendMessage={handleSubtreeMessage}
+              onClose={() => setActiveSubtree(null)}
+            />
+          ) : (
+            <ChatPanel
+              room={room}
+              currentUser={username}
+              onSendMessage={handleSendMessage}
+              onConcedeNode={handleConcedeNode}
+              onFactCheck={handleFactCheck}
+              onOpenSubtree={(parentNodeId, label) => {
+                handleOpenSubtree(parentNodeId, label);
+                // Switch to subtree view once subtree_created arrives
+                // We watch for it via the room.subtrees state update below
+              }}
+              onViewSubtree={(subtreeId) => setActiveSubtree(subtreeId)}
+            />
+          )}
           <FactCheckTicker room={room} />
         </div>
       </div>

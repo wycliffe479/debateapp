@@ -1,83 +1,77 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, X, Reply, ShieldAlert, GitBranch, MessageSquare, Search, BookOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, Search, Flag, ShieldAlert, Bot, TreePine, ChevronRight } from 'lucide-react';
 
-// Message type configuration
-const MSG_TYPES = [
-  { key: 'claim',      label: 'Claim',      color: '#2563EB',  desc: 'Assert a new position or argument' },
-  { key: 'rebuttal',   label: 'Rebuttal',   color: '#7C3AED',  desc: 'Directly challenge a specific point' },
-  { key: 'evidence',   label: 'Evidence',   color: '#059669',  desc: 'Cite a fact, study, or data point' },
-  { key: 'question',   label: 'Question',   color: '#475569',  desc: 'Ask for clarification or proof' },
-  { key: 'concession', label: 'Concession', color: '#D97706',  desc: 'Acknowledge a valid opposing point' },
-  { key: 'subtree',    label: 'New Branch', color: '#BE185D',  desc: 'Start a new sub-argument thread' },
-];
+// ── Fact status badge config ─────────────────────────────────────────────────
+const FACT_COLORS = {
+  true:          { bg: 'rgba(16,185,129,0.15)',  border: '#10B981', text: '#34D399', label: '✅ TRUE' },
+  false:         { bg: 'rgba(239,68,68,0.15)',   border: '#EF4444', text: '#F87171', label: '❌ FALSE' },
+  partially_true:{ bg: 'rgba(245,158,11,0.15)',  border: '#F59E0B', text: '#FCD34D', label: '⚠️ PARTIAL' },
+  checking:      { bg: 'rgba(99,102,241,0.15)',  border: '#6366F1', text: '#A5B4FC', label: '⟳ CHECKING' },
+  failed:        { bg: 'rgba(100,116,139,0.12)', border: '#475569', text: '#94A3B8', label: 'UNVERIFIABLE' },
+  unverified:    null
+};
 
-function TypePicker({ selected, onChange }) {
-  const [open, setOpen] = useState(false);
-  const current = MSG_TYPES.find(t => t.key === selected) || MSG_TYPES[0];
+const TYPE_COLORS = {
+  claim:      '#3B82F6',
+  rebuttal:   '#8B5CF6',
+  evidence:   '#10B981',
+  question:   '#64748B',
+  concession: '#F59E0B',
+};
+
+// ── AI Moderator Message ─────────────────────────────────────────────────────
+function AiMessage({ msg }) {
+  const isFactCheck  = msg.aiType === 'fact_check';
+  const isConcession = msg.aiType === 'concession';
+
+  const borderColor = isFactCheck
+    ? (FACT_COLORS[msg.verdict]?.border || '#6366F1')
+    : '#F59E0B';
+
+  // Render simple markdown-ish bold + italic
+  const renderText = (text) => {
+    if (!text) return null;
+    return text.split('\n').map((line, i) => {
+      const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, j) => {
+        if (part.startsWith('**') && part.endsWith('**'))
+          return <strong key={j}>{part.slice(2, -2)}</strong>;
+        if (part.startsWith('*') && part.endsWith('*'))
+          return <em key={j}>{part.slice(1, -1)}</em>;
+        return part;
+      });
+      return <span key={i}>{parts}{i < text.split('\n').length - 1 && <br />}</span>;
+    });
+  };
 
   return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          background: `${current.color}22`,
-          border: `1px solid ${current.color}66`,
-          borderRadius: '8px',
-          color: current.color,
-          padding: '8px 12px',
-          fontSize: '0.8rem',
-          fontWeight: '600',
-          cursor: 'pointer',
-          whiteSpace: 'nowrap',
-          transition: 'all 0.2s'
-        }}
-      >
-        <span>{current.label}</span>
-        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-      </button>
-
-      {open && (
-        <div style={{
-          position: 'absolute',
-          bottom: '100%',
-          left: 0,
-          marginBottom: '6px',
-          background: 'rgba(10, 15, 28, 0.97)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '10px',
-          overflow: 'hidden',
-          zIndex: 100,
-          minWidth: '200px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-        }}>
-          {MSG_TYPES.map(t => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => { onChange(t.key); setOpen(false); }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                gap: '2px',
-                padding: '10px 14px',
-                background: selected === t.key ? `${t.color}18` : 'transparent',
-                border: 'none',
-                borderLeft: selected === t.key ? `3px solid ${t.color}` : '3px solid transparent',
-                cursor: 'pointer',
-                transition: 'background 0.15s'
-              }}
-              onMouseOver={e => e.currentTarget.style.background = `${t.color}15`}
-              onMouseOut={e => e.currentTarget.style.background = selected === t.key ? `${t.color}18` : 'transparent'}
-            >
-              <span style={{ color: t.color, fontWeight: '700', fontSize: '0.8rem' }}>{t.label}</span>
-              <span style={{ color: '#64748B', fontSize: '0.72rem' }}>{t.desc}</span>
-            </button>
+    <div style={{
+      marginBottom: '10px',
+      padding: '12px 16px',
+      borderRadius: '12px',
+      background: 'rgba(15, 23, 42, 0.6)',
+      border: `1px solid ${borderColor}44`,
+      borderLeft: `3px solid ${borderColor}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '7px' }}>
+        <Bot size={14} style={{ color: borderColor }} />
+        <span style={{ fontWeight: '700', fontSize: '0.78rem', color: borderColor, letterSpacing: '0.04em' }}>
+          AGORA AI {isFactCheck ? '· FACT CHECK' : isConcession ? '· CONCESSION' : ''}
+        </span>
+      </div>
+      <p style={{ fontSize: '0.84rem', color: '#CBD5E1', lineHeight: '1.55', margin: 0, wordBreak: 'break-word' }}>
+        {renderText(msg.text)}
+      </p>
+      {msg.sources?.length > 0 && (
+        <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {msg.sources.slice(0, 3).map((s, i) => s.url && (
+            <a key={i} href={s.url} target="_blank" rel="noreferrer" style={{
+              fontSize: '0.68rem', color: '#60A5FA', background: 'rgba(59,130,246,0.08)',
+              border: '1px solid rgba(59,130,246,0.2)', borderRadius: '4px',
+              padding: '1px 7px', textDecoration: 'none', whiteSpace: 'nowrap',
+              overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', display: 'inline-block'
+            }}>
+              🔗 {s.title || s.url}
+            </a>
           ))}
         </div>
       )}
@@ -85,93 +79,175 @@ function TypePicker({ selected, onChange }) {
   );
 }
 
-// Per-message inline reply actions
-function MessageActions({ msg, node, isSelf, onReply, onQuickReply }) {
-  const [showActions, setShowActions] = useState(false);
+// ── Individual Message Bubble ─────────────────────────────────────────────────
+function MessageBubble({ msg, node, isSelf, onConcede, onFactCheck, onOpenSubtree, room }) {
+  const [hovered, setHovered] = useState(false);
+
+  const factConf   = FACT_COLORS[node?.fact_status] || null;
+  const typeColor  = TYPE_COLORS[node?.type] || '#3B82F6';
+  const isConceded = node?.conceded || false;
+  const hasSubtopic = node?.detected_subtopic && node?.subtopic_label;
+  const hasFactClaim = node?.contains_factual_claim && node?.extracted_claim;
+
+  // Find if a subtree was already opened from this node
+  const existingSubtree = room?.subtrees
+    ? Object.values(room.subtrees).find(st => st.parentNodeId === msg.id)
+    : null;
 
   return (
-    <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-      {/* Always show reply options on others' messages */}
-      {!isSelf && (
-        <>
-          <button
-            onClick={() => onReply(node, 'rebuttal')}
-            style={{
-              background: 'rgba(124,58,237,0.1)',
-              border: '1px solid rgba(124,58,237,0.3)',
-              borderRadius: '6px',
-              color: '#A78BFA',
-              fontSize: '0.7rem',
-              fontWeight: '600',
-              padding: '3px 8px',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '3px'
-            }}
-          >
-            <Reply size={10} /> Rebut
-          </button>
-          <button
-            onClick={() => onReply(node, 'supports')}
-            style={{
-              background: 'rgba(5,150,105,0.1)',
-              border: '1px solid rgba(5,150,105,0.3)',
-              borderRadius: '6px',
-              color: '#34D399',
-              fontSize: '0.7rem',
-              fontWeight: '600',
-              padding: '3px 8px',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '3px'
-            }}
-          >
-            ✓ Support
-          </button>
-          <button
-            onClick={() => onReply(node, 'questions')}
-            style={{
-              background: 'rgba(71,85,105,0.15)',
-              border: '1px solid rgba(71,85,105,0.4)',
-              borderRadius: '6px',
-              color: '#94A3B8',
-              fontSize: '0.7rem',
-              fontWeight: '600',
-              padding: '3px 8px',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: '3px'
-            }}
-          >
-            ? Question
-          </button>
-        </>
-      )}
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        marginBottom: '10px',
+        padding: '10px 14px',
+        borderRadius: '12px',
+        background: isConceded ? 'rgba(30,41,59,0.2)' : 'rgba(30, 41, 59, 0.45)',
+        borderLeft: `3px solid ${isConceded ? '#475569' : typeColor}`,
+        opacity: isConceded ? 0.55 : 1,
+        transition: 'all 0.2s',
+      }}
+    >
+      {/* Header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '5px', gap: '6px', flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: '700', fontSize: '0.82rem', color: isSelf ? '#60A5FA' : '#F472B6' }}>
+          {msg.author}{isSelf && ' (You)'}
+        </span>
 
-      {/* New subtree always available on any message */}
-      <button
-        onClick={() => onReply(node, 'subtree')}
-        style={{
-          background: 'rgba(190,24,93,0.1)',
-          border: '1px solid rgba(190,24,93,0.3)',
-          borderRadius: '6px',
-          color: '#F472B6',
-          fontSize: '0.7rem',
-          fontWeight: '600',
-          padding: '3px 8px',
-          cursor: 'pointer',
-          display: 'flex', alignItems: 'center', gap: '3px'
-        }}
-      >
-        <GitBranch size={10} /> Branch
-      </button>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Type badge */}
+          {node?.type && (
+            <span style={{
+              fontSize: '0.6rem', fontWeight: '700', padding: '1px 6px', borderRadius: '4px',
+              background: `${typeColor}20`, border: `1px solid ${typeColor}55`,
+              color: typeColor, textTransform: 'uppercase', letterSpacing: '0.05em'
+            }}>
+              {node.type}
+            </span>
+          )}
+
+          {/* Fact status badge */}
+          {factConf && (
+            <span style={{
+              fontSize: '0.6rem', fontWeight: '700', padding: '1px 6px', borderRadius: '4px',
+              background: factConf.bg, border: `1px solid ${factConf.border}`,
+              color: factConf.text, textTransform: 'uppercase'
+            }}>
+              {factConf.label}
+            </span>
+          )}
+
+          {/* Conceded badge */}
+          {isConceded && (
+            <span style={{
+              fontSize: '0.6rem', fontWeight: '700', padding: '1px 6px', borderRadius: '4px',
+              background: 'rgba(100,116,139,0.2)', border: '1px solid #475569',
+              color: '#94A3B8', textTransform: 'uppercase'
+            }}>
+              🏳 CONCEDED
+            </span>
+          )}
+
+          {/* Fallacy badge */}
+          {node?.fallacy_flags?.length > 0 && (
+            <span style={{
+              fontSize: '0.6rem', fontWeight: '700', padding: '1px 6px', borderRadius: '4px',
+              background: 'rgba(239,68,68,0.2)', border: '1px solid #EF4444',
+              color: '#F87171', display: 'inline-flex', alignItems: 'center', gap: '2px'
+            }}>
+              <ShieldAlert size={8} /> FALLACY
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Message text */}
+      <p style={{
+        fontSize: '0.88rem', color: isConceded ? '#64748B' : '#F1F5F9',
+        wordBreak: 'break-word', lineHeight: '1.5', margin: 0,
+        textDecoration: isConceded ? 'line-through' : 'none'
+      }}>
+        {msg.text}
+      </p>
+
+      {/* Action chips — visible on hover or always on mobile */}
+      {!isConceded && (hovered || hasSubtopic || hasFactClaim) && (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+
+          {/* 🔍 Check Fact — shows when AI detected a factual claim */}
+          {hasFactClaim && node.fact_status === 'unverified' && (
+            <button
+              onClick={() => onFactCheck(msg.id, node.extracted_claim)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                borderRadius: '6px', color: '#A5B4FC', fontSize: '0.7rem',
+                fontWeight: '600', padding: '3px 9px', cursor: 'pointer', transition: 'all 0.15s'
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.2)'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(99,102,241,0.1)'; }}
+            >
+              <Search size={10} /> Check Fact
+            </button>
+          )}
+
+          {/* 🌿 Explore Subtree — shows when AI detected a subtopic */}
+          {hasSubtopic && !existingSubtree && (
+            <button
+              onClick={() => onOpenSubtree(msg.id, node.subtopic_label)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)',
+                borderRadius: '6px', color: '#34D399', fontSize: '0.7rem',
+                fontWeight: '600', padding: '3px 9px', cursor: 'pointer', transition: 'all 0.15s'
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.2)'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(16,185,129,0.1)'; }}
+            >
+              <TreePine size={10} /> Explore: <em style={{ marginLeft: '2px', fontStyle: 'normal' }}>{node.subtopic_label}</em>
+              <ChevronRight size={9} />
+            </button>
+          )}
+
+          {/* Show existing subtree link */}
+          {existingSubtree && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: '4px',
+              background: 'rgba(16,185,129,0.07)', border: '1px solid rgba(16,185,129,0.2)',
+              borderRadius: '6px', color: '#6EE7B7', fontSize: '0.7rem',
+              fontWeight: '600', padding: '3px 9px',
+            }}>
+              <TreePine size={9} /> Subtree: {existingSubtree.label}
+            </span>
+          )}
+
+          {/* 🏳 Concede — only on own messages */}
+          {isSelf && hovered && (
+            <button
+              onClick={onConcede}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                borderRadius: '6px', color: '#FCD34D', fontSize: '0.7rem',
+                fontWeight: '600', padding: '3px 9px', cursor: 'pointer', transition: 'all 0.15s'
+              }}
+              onMouseOver={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.18)'; }}
+              onMouseOut={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.08)'; }}
+            >
+              <Flag size={10} /> Concede
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export default function ChatPanel({ room, currentUser, onSendMessage }) {
+// ── Main ChatPanel ────────────────────────────────────────────────────────────
+export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeNode, onFactCheck, onOpenSubtree }) {
   const [text, setText] = useState('');
-  const [msgType, setMsgType] = useState('claim');
-  const [replyTarget, setReplyTarget] = useState(null); // { node, relation }
   const chatEndRef = useRef(null);
-  const inputRef = useRef(null);
+  const inputRef   = useRef(null);
 
   const { messages = [], nodes = [] } = room || {};
 
@@ -179,222 +255,117 @@ export default function ChatPanel({ room, currentUser, onSendMessage }) {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const getMsgNode = (msgId) => nodes.find(n => n.id === msgId);
+  const getNode = (msgId) => nodes.find(n => n.id === msgId);
 
-  const handleReply = (node, relation) => {
-    setReplyTarget({ node, relation });
-    // Auto-set message type to match action
-    if (relation === 'rebuttal' || relation === 'rebuts') setMsgType('rebuttal');
-    else if (relation === 'supports') setMsgType('evidence');
-    else if (relation === 'questions') setMsgType('question');
-    else if (relation === 'subtree') setMsgType('claim');
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleSend = () => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onSendMessage(trimmed);
+    setText('');
     inputRef.current?.focus();
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-
-    // subtree = no parent, fresh chain
-    const replyId = (replyTarget && replyTarget.relation !== 'subtree') ? replyTarget.node?.id : null;
-    const relation = replyTarget?.relation || null;
-
-    onSendMessage(text, replyId, relation, msgType);
-    setText('');
-    setReplyTarget(null);
-    setMsgType('claim');
-  };
-
-  const cancelReply = () => setReplyTarget(null);
-
   return (
     <div className="glass-panel" style={{
-      display: 'flex',
-      flexDirection: 'column',
-      padding: '16px',
-      flex: 1,
-      minHeight: 0,
-      overflow: 'hidden'
+      display: 'flex', flexDirection: 'column',
+      padding: '16px', flex: 1, minHeight: 0, overflow: 'hidden'
     }}>
+      {/* Header */}
       <h3 style={{
-        fontSize: '1rem',
-        borderBottom: '1px solid var(--border-color)',
-        paddingBottom: '8px',
-        marginBottom: '12px',
-        color: '#F8FAFC',
-        flexShrink: 0
+        fontSize: '0.95rem', borderBottom: '1px solid var(--border-color)',
+        paddingBottom: '8px', marginBottom: '12px',
+        color: '#F8FAFC', flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: '8px'
       }}>
-        Debate Chat Log
+        Live Debate
+        <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: '400', marginLeft: 'auto' }}>
+          AI moderates automatically
+        </span>
       </h3>
 
-      {/* Messages */}
+      {/* Messages list */}
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}>
         {messages.length === 0 ? (
           <div style={{
-            display: 'flex', justifyContent: 'center', alignItems: 'center',
-            height: '100%', color: '#64748B', fontSize: '0.875rem', textAlign: 'center'
+            display: 'flex', flexDirection: 'column', justifyContent: 'center',
+            alignItems: 'center', height: '100%', color: '#475569',
+            fontSize: '0.85rem', textAlign: 'center', gap: '8px'
           }}>
-            Post a claim to start the debate.
+            <span style={{ fontSize: '1.5rem' }}>💬</span>
+            <span>Start debating — just type freely.</span>
+            <span style={{ fontSize: '0.75rem', color: '#334155' }}>
+              The AI will classify your arguments, detect claims, and build the graph automatically.
+            </span>
           </div>
         ) : (
           messages.map((msg) => {
-            const node = getMsgNode(msg.id);
-            const nodeType = node?.type || 'claim';
-            const factStatus = node?.fact_status || 'unverified';
-            const isSelf = msg.author === currentUser;
-            const typeConf = MSG_TYPES.find(t => t.key === nodeType) || MSG_TYPES[0];
-
+            if (msg.isAI) return <AiMessage key={msg.id} msg={msg} />;
+            const node = getNode(msg.id);
             return (
-              <div key={msg.id} style={{
-                marginBottom: '12px',
-                padding: '10px 14px',
-                borderRadius: '12px',
-                background: 'rgba(30, 41, 59, 0.4)',
-                borderLeft: `4px solid ${typeConf.color}`,
-                transition: 'all 0.2s'
-              }}>
-                {/* Header row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', flexWrap: 'wrap', gap: '4px' }}>
-                  <span style={{ fontWeight: 'bold', fontSize: '0.82rem', color: isSelf ? '#60A5FA' : '#F472B6' }}>
-                    {msg.author}{isSelf && ' (You)'}
-                  </span>
-
-                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    {/* Type badge */}
-                    <span style={{
-                      fontSize: '0.62rem', fontWeight: '700', padding: '1px 6px',
-                      borderRadius: '4px', background: `${typeConf.color}22`,
-                      border: `1px solid ${typeConf.color}55`, color: typeConf.color,
-                      textTransform: 'uppercase', letterSpacing: '0.05em'
-                    }}>{nodeType}</span>
-
-                    {/* Fact status badge */}
-                    {factStatus !== 'unverified' && (
-                      <span style={{
-                        fontSize: '0.62rem', fontWeight: '700', padding: '1px 6px',
-                        borderRadius: '4px', textTransform: 'uppercase',
-                        background: factStatus === 'true' ? 'rgba(16,185,129,0.15)' :
-                                    factStatus === 'false' ? 'rgba(239,68,68,0.15)' :
-                                    factStatus === 'checking' ? 'rgba(245,158,11,0.15)' :
-                                    'rgba(100,116,139,0.15)',
-                        border: `1px solid ${
-                          factStatus === 'true' ? 'var(--accent-success)' :
-                          factStatus === 'false' ? 'var(--accent-danger)' :
-                          factStatus === 'checking' ? 'var(--accent-warning)' : 'var(--accent-gray)'}`,
-                        color: factStatus === 'true' ? 'var(--accent-success)' :
-                               factStatus === 'false' ? 'var(--accent-danger)' :
-                               factStatus === 'checking' ? 'var(--accent-warning)' : '#94A3B8'
-                      }}>{factStatus === 'checking' ? '⟳ checking' : factStatus === 'failed' ? 'unverifiable' : factStatus}</span>
-                    )}
-
-                    {/* Fallacy badge */}
-                    {node?.fallacy_flags?.length > 0 && (
-                      <span style={{
-                        fontSize: '0.62rem', fontWeight: '700', padding: '1px 6px',
-                        borderRadius: '4px', background: 'rgba(239,68,68,0.2)',
-                        border: '1px solid var(--accent-danger)', color: 'var(--accent-danger)',
-                        display: 'inline-flex', alignItems: 'center', gap: '2px'
-                      }}>
-                        <ShieldAlert size={9} /> FALLACY
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Message text */}
-                <p style={{ fontSize: '0.88rem', color: '#F1F5F9', wordBreak: 'break-word', lineHeight: '1.45' }}>
-                  {msg.text}
-                </p>
-
-                {/* Inline reply / branch actions */}
-                <MessageActions
-                  msg={msg}
-                  node={node}
-                  isSelf={isSelf}
-                  onReply={handleReply}
-                />
-              </div>
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                node={node}
+                isSelf={msg.author === currentUser}
+                onConcede={() => onConcedeNode(msg.id)}
+                onFactCheck={onFactCheck}
+                onOpenSubtree={onOpenSubtree}
+                room={room}
+              />
             );
           })
         )}
         <div ref={chatEndRef} />
       </div>
 
-      {/* Reply target banner */}
-      {replyTarget && (
-        <div style={{
-          background: 'rgba(59,130,246,0.07)',
-          border: '1px solid rgba(59,130,246,0.25)',
-          borderRadius: '8px',
-          padding: '8px 12px',
-          marginBottom: '8px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexShrink: 0
-        }}>
-          <div style={{ fontSize: '0.78rem', color: '#93C5FD', overflow: 'hidden' }}>
-            {replyTarget.relation === 'subtree'
-              ? <span style={{ color: '#F472B6' }}><GitBranch size={11} style={{ verticalAlign: 'middle', marginRight: '4px' }} />Starting a new branch from this point</span>
-              : <span>
-                  <span style={{ fontWeight: '600' }}>
-                    {replyTarget.relation === 'supports' ? '✓ Supporting' :
-                     replyTarget.relation === 'questions' ? '? Questioning' : '⚔ Rebutting'}
-                  </span>
-                  {' → '}
-                  <span style={{ color: '#CBD5E1', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px', display: 'inline-block', verticalAlign: 'bottom' }}>
-                    "{replyTarget.node?.text}"
-                  </span>
-                </span>
-            }
-          </div>
-          <button onClick={cancelReply} style={{ background: 'transparent', border: 'none', color: '#64748B', cursor: 'pointer', flexShrink: 0 }}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
       {/* Input bar */}
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-          <TypePicker selected={msgType} onChange={setMsgType} />
-          <input
-            ref={inputRef}
-            type="text"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder={
-              msgType === 'rebuttal'   ? 'Counter the argument...' :
-              msgType === 'evidence'   ? 'Cite data or a source...' :
-              msgType === 'question'   ? 'Ask a clarifying question...' :
-              msgType === 'concession' ? 'Acknowledge a valid point...' :
-              msgType === 'subtree'    ? 'Start a new sub-thread...' :
-                                        'State a claim...'
-            }
-            style={{
-              flex: 1,
-              background: 'rgba(15,23,42,0.5)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '8px',
-              color: '#F8FAFC',
-              padding: '9px 14px',
-              fontSize: '0.875rem',
-              outline: 'none',
-              transition: 'border-color 0.2s'
-            }}
-            onFocus={e => e.target.style.borderColor = 'var(--accent-primary)'}
-            onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
-          />
-          <button
-            type="submit"
-            disabled={!text.trim()}
-            className="btn-primary"
-            style={{ padding: '9px 14px', opacity: text.trim() ? 1 : 0.4, pointerEvents: text.trim() ? 'auto' : 'none', flexShrink: 0 }}
-          >
-            <Send size={15} />
-          </button>
-        </div>
-      </form>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
+        <textarea
+          ref={inputRef}
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Say anything… AI analyzes your argument in real time. (Enter to send, Shift+Enter for newline)"
+          rows={2}
+          style={{
+            flex: 1,
+            background: 'rgba(15,23,42,0.5)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '10px',
+            color: '#F8FAFC',
+            padding: '10px 14px',
+            fontSize: '0.875rem',
+            outline: 'none',
+            resize: 'none',
+            fontFamily: 'inherit',
+            lineHeight: '1.45',
+            transition: 'border-color 0.2s'
+          }}
+          onFocus={e => e.target.style.borderColor = 'var(--accent-primary)'}
+          onBlur={e  => e.target.style.borderColor = 'var(--border-color)'}
+        />
+        <button
+          onClick={handleSend}
+          disabled={!text.trim()}
+          className="btn-primary"
+          style={{
+            padding: '10px 16px',
+            opacity: text.trim() ? 1 : 0.4,
+            pointerEvents: text.trim() ? 'auto' : 'none',
+            flexShrink: 0,
+            alignSelf: 'flex-end'
+          }}
+        >
+          <Send size={15} />
+        </button>
+      </div>
     </div>
   );
 }
