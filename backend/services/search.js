@@ -2,6 +2,17 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 /**
+ * Required environment variables:
+ *   GEMINI_API_KEY  — Gemini API key (required for AI analysis + fact-check synthesis)
+ *
+ * Optional search API keys (for higher-quality results; falls back to Wikipedia + DDG if absent):
+ *   TAVILY_API_KEY  — Tavily search API (https://tavily.com, free tier available)
+ *   SERPER_API_KEY  — Serper.dev Google Search API (https://serper.dev, free tier available)
+ *
+ * On Render: set these under Environment → Add Environment Variable.
+ */
+
+/**
  * Clean HTML entities and tags from strings.
  */
 function cleanText(text) {
@@ -274,8 +285,22 @@ async function searchWeb(query) {
   }
 
   // Last resort: DDG Instant Answer only
-  console.log('[Search] Trying DDG Instant Answer as last resort...');
-  return await searchDDGInstant(query);
+  try {
+    console.log('[Search] Trying DDG Instant Answer as last resort...');
+    return await searchDDGInstant(query);
+  } catch (ddgErr) {
+    // Log full error including the underlying cause (e.g. network failures on Render)
+    console.error('[Search] DDG Instant Answer also failed.');
+    console.error('[Search] Error message:', ddgErr.message);
+    console.error('[Search] Error cause:', ddgErr.cause);   // Node fetch sets .cause for network errors
+    console.error('[Search] Full error:', ddgErr);
+
+    // Graceful fallback — return empty results so verifyClaim can still
+    // run using the AI's own general knowledge (no external data needed for
+    // well-known facts like "water is transparent" or wrong birth years).
+    console.warn('[Search] All sources failed. Proceeding with AI-only verification (no external sources).');
+    return [];
+  }
 }
 
 module.exports = { searchWeb };

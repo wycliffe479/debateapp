@@ -468,9 +468,14 @@ wss.on('connection', (ws) => {
               broadcastToRoom(roomId, 'new_ai_message', aiMsg);
               broadcastToRoom(roomId, 'edges_updated', room.edges);
             } catch (err) {
-              console.error('[FactCheck] Error:', err.message);
+              // Log full error object — err.cause holds the real network failure reason
+              console.error('[FactCheck] Unexpected error during fact-check pipeline.');
+              console.error('[FactCheck] Message:', err.message);
+              console.error('[FactCheck] Cause:',   err.cause);
+              console.error('[FactCheck] Full error:', err);
+
               node.fact_status = 'failed';
-              node.fact_explanation = `Fact check failed: ${err.message}`;
+              node.fact_explanation = `Fact check could not complete: ${err.message}`;
               broadcastToRoom(roomId, 'node_updated', node);
             }
           })();
