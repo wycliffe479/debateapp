@@ -77,16 +77,65 @@ async function parseMessage(messageText, authorName, topic, existingNodes) {
   const systemInstruction = `You are Agora, the AI moderator of a live debate.
 Your task is to analyze the incoming message in the context of the ongoing debate topic: "${topic}".
 Perform the following analysis:
+
 1. Classify the message into one of these types:
    - "claim": Stating a new proposition, stance, or conceptual argument.
    - "evidence": Citing a fact, statistic, reference, or study to back up a claim.
    - "rebuttal": Countering, disputing, or directly challenging a previous claim.
    - "question": Asking a clarifying or analytical query.
    - "concession": Agreeing with or acknowledging a point made by the other side.
-2. Check for common logical fallacies: ad hominem, strawman, false dilemma, slippery slope, appeal to emotion, whataboutism, circular reasoning, hasty generalization, appeal to authority (misused). List any detected fallacies with a brief, clear, and non-shaming explanation. Also include a constructive, fallacy-free "rephrase_suggestion" to help the user express their core argument productively.
+
+2. LOGICAL FALLACY DETECTION — Critical rules:
+   - Analyze the LOGICAL STRUCTURE of the argument, NOT the tone, aggression, or word choice.
+   - Only flag a fallacy if you are confident the argument's logical move matches one of the definitions below.
+   - Do NOT flag strong, confident, or emotional language alone as a fallacy.
+   - If a fallacy is detected, you MUST return: the fallacy name, a one-sentence explanation of exactly why THIS specific argument commits that fallacy, and the exact phrase from the message that triggers it.
+   - If no fallacy is present, return an empty array.
+
+   FALLACY REFERENCE LIST:
+
+   Ad Hominem — The argument attacks the PERSON making the claim rather than the claim itself. Test: would the argument fail if the same words came from a different person?
+   Example: "Nietzsche was a cocaine addict so his views on marriage are worthless." — attacks Nietzsche's lifestyle, not his reasoning.
+
+   Genetic Fallacy — The argument rejects a claim purely because of WHERE it came from (source, origin, who funded it) without engaging with its content or methodology.
+   Example: "That study was funded by a pharmaceutical company so the results are invalid." — the funding source doesn't invalidate the findings.
+
+   Straw Man — The argument responds to a DISTORTED or EXAGGERATED version of the opponent's actual position, not what they actually said.
+   Example: Opponent says "reduce military spending" → response is "so you want to leave the country completely defenceless."
+
+   Appeal to Authority — The argument uses a famous or respected person's OPINION as a substitute for evidence or reasoning, without the person having relevant expertise or the opinion being logically connected.
+   Example: "Einstein believed in God therefore God exists." — the person's fame doesn't make the claim true.
+
+   False Dichotomy — The argument presents exactly TWO options as if they are the only possibilities, when other options clearly exist.
+   Example: "You either support this policy completely or you hate the poor." — ignores middle-ground positions.
+
+   Slippery Slope — The argument claims one event will INEVITABLY lead to an extreme consequence through a chain of events, without justifying why each step in the chain is inevitable.
+   Example: "If we legalise marijuana, soon everyone will be on heroin."
+
+   Appeal to Emotion — The argument uses emotionally charged language or scenarios to MANIPULATE the audience INSTEAD of providing logical reasoning. The emotion replaces the argument, not accompanies it.
+   Example: "Think of the children suffering — how could anyone support this policy?" — the emotional image substitutes for evidence.
+
+   Circular Reasoning — The argument uses its CONCLUSION as one of its premises. The argument proves itself with itself.
+   Example: "The Bible is true because it says so in the Bible."
+
+   Hasty Generalisation — The argument draws a BROAD universal conclusion from a sample that is too small, too specific, or clearly unrepresentative.
+   Example: "I met two aggressive people from that country — they are all like that."
+
+   Red Herring — The argument introduces a point that is IRRELEVANT to the actual debate to distract from the original claim.
+   Example: During a debate about climate policy, suddenly arguing "but what about government corruption?" — the new point doesn't address the original claim.
+
+   Appeal to Popularity (Ad Populum) — The argument claims something must be TRUE or CORRECT solely because a large number of people believe it.
+   Example: "Millions of people believe in astrology so it must have scientific validity."
+
+   Burden of Proof Reversal — The argument SHIFTS responsibility of proof onto the opponent to disprove a claim, rather than providing evidence for it themselves.
+   Example: "Prove that ghosts don't exist." — the person making the positive claim must prove it, not the skeptic.
+
 3. Extract any verifiable factual or statistical claim made. If the statement is just an opinion, value judgment, or pure logic, set this to null. Keep it short (e.g. "Germany produced 50% of its power from solar in 2023").
+
 4. Canonical Matching: Look at the existing debate nodes. If this message is referencing, repeating, or directly confirming/challenging the exact same underlying fact/claim as an existing node, return that node's canonical_concept_id so we can group them in the Knowledge Graph. If it is a completely new concept, return null.
-5. Subtopic Detection: If this message takes the debate noticeably deeper into a specific sub-issue (e.g. the main debate is "remote work vs office" and this message focuses specifically on "childcare and remote work"), set detected_subtopic to true and provide a short subtopic_label (3-6 words). Otherwise set both to false/null.
+
+5. Subtopic Detection: If this message takes the debate noticeably deeper into a specific sub-issue, set detected_subtopic to true and provide a short subtopic_label (3-6 words). Otherwise set both to false/null.
+
 6. Reply Detection: Look at the existing debate nodes. If this message is most directly responding to, rebutting, or building on a specific previous message, return that node's id as reply_to_node_id. If it is a standalone new point, return null.`;
 
   const promptText = `
@@ -120,18 +169,19 @@ Analyze this message according to the rules and return the results in the requir
         items: {
           type: 'OBJECT',
           properties: {
-            type: { type: 'STRING' },
-            explanation: { type: 'STRING' },
+            type:             { type: 'STRING' },
+            explanation:      { type: 'STRING' },
+            triggering_quote: { type: 'STRING' },
             rephrase_suggestion: { type: 'STRING' }
           },
-          required: ['type', 'explanation', 'rephrase_suggestion']
+          required: ['type', 'explanation', 'triggering_quote', 'rephrase_suggestion']
         }
       },
-      extracted_claim: { type: 'STRING', nullable: true },
-      canonical_concept_match: { type: 'STRING', nullable: true },
-      detected_subtopic: { type: 'BOOLEAN' },
-      subtopic_label: { type: 'STRING', nullable: true },
-      reply_to_node_id: { type: 'STRING', nullable: true }
+      extracted_claim:        { type: 'STRING', nullable: true },
+      canonical_concept_match:{ type: 'STRING', nullable: true },
+      detected_subtopic:      { type: 'BOOLEAN' },
+      subtopic_label:         { type: 'STRING', nullable: true },
+      reply_to_node_id:       { type: 'STRING', nullable: true }
     },
     required: ['type', 'fallacies', 'extracted_claim', 'canonical_concept_match', 'detected_subtopic', 'subtopic_label', 'reply_to_node_id']
   };
@@ -153,19 +203,61 @@ Analyze this message according to the rules and return the results in the requir
         type = 'concession';
       }
 
-      // Detect fallacy
+      // Mock fallacy detection — pattern-match logical structure, not tone
       const fallacies = [];
-      if (lowerText.includes('you ') || lowerText.includes('your ') || lowerText.includes('stupid') || lowerText.includes('idiot') || lowerText.includes('ignorant')) {
+
+      // Ad Hominem: argument targets the PERSON ("you are", "he is", personal attacks)
+      if (/\b(you are|you're|he is|she is|they are)\b.*\b(wrong|stupid|ignorant|unqualified|biased|hypocrite)\b/i.test(messageText)) {
         fallacies.push({
-          type: 'ad hominem',
-          explanation: 'Attacking the person making the argument instead of addressing the core argument itself.',
-          rephrase_suggestion: 'I disagree with your point. Let\'s look at the facts instead of focusing on personal aspects.'
+          type: 'Ad Hominem',
+          explanation: 'This argument attacks the person making the claim rather than engaging with the claim itself.',
+          triggering_quote: messageText.match(/\b(you are|you're|he is|she is|they are)\b.{0,40}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Address the argument directly: what specific reasoning or evidence do you disagree with?'
         });
-      } else if (lowerText.includes('always') || lowerText.includes('never') || lowerText.includes('everyone') || lowerText.includes('nobody')) {
+      }
+      // Straw Man: "so you\'re saying", "so you want", "your position means"
+      else if (/\b(so you('re| are) saying|so you want|that means you|your position means|you must (want|believe|think))\b/i.test(messageText)) {
         fallacies.push({
-          type: 'hasty generalization',
-          explanation: 'Making a sweeping conclusion based on insufficient or selective evidence.',
-          rephrase_suggestion: 'In many observed cases, this holds true, though there may be exceptions depending on context.'
+          type: 'Straw Man',
+          explanation: 'This argument responds to an exaggerated or distorted version of the opponent's actual position.',
+          triggering_quote: messageText.match(/\b(so you('re| are) saying|so you want|that means you|your position means|you must (want|believe|think)).{0,50}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Engage with what your opponent actually said rather than an extreme version of their position.'
+        });
+      }
+      // False Dichotomy: "either...or", "you\'re with us or"
+      else if (/\b(either .{1,40} or|you('re| are) either|only two (options|choices)|with us or against)\b/i.test(messageText)) {
+        fallacies.push({
+          type: 'False Dichotomy',
+          explanation: 'This argument presents only two options as if they are the only possibilities, ignoring alternatives.',
+          triggering_quote: messageText.match(/\b(either .{1,40} or|you('re| are) either|only two (options|choices)|with us or against).{0,30}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Acknowledge that there may be positions between the two extremes you have presented.'
+        });
+      }
+      // Slippery Slope: "will lead to", "next thing", "soon everyone"
+      else if (/\b(will (inevitably|eventually) lead to|next thing (you know)?|soon (everyone|we will)|once you allow|first .{1,30} then)\b/i.test(messageText)) {
+        fallacies.push({
+          type: 'Slippery Slope',
+          explanation: 'This argument assumes one event will inevitably cause an extreme outcome without justifying the causal chain.',
+          triggering_quote: messageText.match(/\b(will (inevitably|eventually) lead to|next thing|soon (everyone|we will)|once you allow).{0,40}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Justify each step in the causal chain with evidence rather than asserting inevitability.'
+        });
+      }
+      // Hasty Generalisation: "all", "every", "none of them" after a single example
+      else if (/\b(all of them|every single|none of them|they all|always do this|never do this)\b/i.test(messageText)) {
+        fallacies.push({
+          type: 'Hasty Generalisation',
+          explanation: 'This argument draws a broad universal conclusion from what appears to be a limited or unrepresentative sample.',
+          triggering_quote: messageText.match(/\b(all of them|every single|none of them|they all|always do this|never do this).{0,30}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Qualify your claim: does your evidence represent a broad enough sample to support this conclusion?'
+        });
+      }
+      // Appeal to Popularity: "millions believe", "everyone knows", "most people agree"
+      else if (/\b(millions (of people )?(believe|think|agree)|everyone knows|most people (think|agree|believe)|majority (think|believe|say))\b/i.test(messageText)) {
+        fallacies.push({
+          type: 'Appeal to Popularity',
+          explanation: 'This argument claims something is true solely because many people believe it, which is not evidence of truth.',
+          triggering_quote: messageText.match(/\b(millions|everyone knows|most people|majority).{0,40}/i)?.[0] || messageText.substring(0, 60),
+          rephrase_suggestion: 'Provide logical or empirical evidence for the claim rather than relying on how many people hold it.'
         });
       }
 

@@ -87,8 +87,9 @@ export default function NudgeModal({ isOpen, data, onRephrase, onPostAnyway }) {
               padding: '12px 16px',
               display: 'flex',
               flexDirection: 'column',
-              gap: '6px'
+              gap: '8px'
             }}>
+              {/* Fallacy name badge */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{
                   backgroundColor: 'var(--accent-danger)',
@@ -103,11 +104,32 @@ export default function NudgeModal({ isOpen, data, onRephrase, onPostAnyway }) {
                   {fal.type}
                 </span>
               </div>
-              <p style={{ fontSize: '0.85rem', color: '#E2E8F0' }}>{fal.explanation}</p>
+
+              {/* Triggering quote — the exact phrase that triggered the fallacy */}
+              {fal.triggering_quote && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  borderLeft: '3px solid rgba(239,68,68,0.5)',
+                  borderRadius: '0 6px 6px 0',
+                  padding: '6px 10px',
+                }}>
+                  <span style={{ fontSize: '0.68rem', color: '#F87171', fontWeight: '700',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block',
+                    marginBottom: '3px' }}>
+                    Flagged phrase:
+                  </span>
+                  <span style={{ fontSize: '0.82rem', color: '#FCA5A5', fontStyle: 'italic' }}>
+                    &ldquo;{fal.triggering_quote}&rdquo;
+                  </span>
+                </div>
+              )}
+
+              {/* Why this specific argument commits this fallacy */}
+              <p style={{ fontSize: '0.85rem', color: '#E2E8F0', margin: 0 }}>{fal.explanation}</p>
               
               {fal.rephrase_suggestion && (
                 <div style={{
-                  marginTop: '6px',
+                  marginTop: '2px',
                   background: 'rgba(59, 130, 246, 0.05)',
                   border: '1px dashed rgba(59, 130, 246, 0.2)',
                   borderRadius: '8px',
@@ -120,7 +142,7 @@ export default function NudgeModal({ isOpen, data, onRephrase, onPostAnyway }) {
                     <Sparkles size={14} />
                     <span>AI Suggested Rephrasing</span>
                   </div>
-                  <p style={{ fontSize: '0.8rem', color: '#93C5FD', fontStyle: 'italic' }}>
+                  <p style={{ fontSize: '0.8rem', color: '#93C5FD', fontStyle: 'italic', margin: 0 }}>
                     "{fal.rephrase_suggestion}"
                   </p>
                   <button
