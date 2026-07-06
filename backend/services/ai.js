@@ -228,23 +228,30 @@ Analyze this message according to the rules and return the results in the requir
  * Pipeline Step 2: Synthesize search results to verify a claim.
  */
 async function verifyClaim(claim, searchResults) {
-  const systemInstruction = `You are a professional fact-checking assistant.
-Analyze the user's factual claim against the provided search results and determine a verdict.
-Verdicts must be one of:
-- "true": The claim is fully supported by credible search sources.
-- "false": The claim is contradicted or disproven by credible search sources.
-- "partially_true": The claim is partially correct, but leaves out crucial context or mixes facts with errors.
-- "unverified": The search results do not provide enough clear evidence to verify or disprove the claim.
+  const systemInstruction = `You are a precise, confident fact-checking assistant with broad general knowledge.
 
-Write a one-line concise explanation explaining your reasoning.`;
+Your job is to evaluate whether a claim is true or false, using BOTH:
+1. The provided web search results
+2. Your own general knowledge and training data
 
-  const promptText = `
-Claim: "${claim}"
+Rules:
+- If you know from general knowledge that a claim is factually wrong (e.g. a wrong birth year, wrong statistic, incorrect historical date), return "false" — do NOT return "unverified" just because the search results are incomplete.
+- If a claim is false, your explanation MUST include the correct fact (e.g. "Gandhi was actually born on October 2, 1869, not 1988").
+- Only use "unverified" for genuinely ambiguous claims where neither you nor the search results can determine truth (e.g. unpublished data, future predictions, purely subjective claims).
+- Be direct and specific. Never be vague.
 
-Search Results:
+Verdicts:
+- "true": Claim is correct and supported.
+- "false": Claim is factually wrong. Always state the correct fact in the explanation.
+- "partially_true": Claim has a correct core but contains errors or important missing context.
+- "unverified": Genuinely impossible to verify from any source (rare — use sparingly).`;
+
+  const promptText = `Claim to fact-check: "${claim}"
+
+Web search results for context:
 ${JSON.stringify(searchResults, null, 2)}
 
-Provide your verdict and a short explanation.`;
+Use your general knowledge AND the search results. If the claim is false, state the correct fact clearly.`;
 
   const contents = [
     {
