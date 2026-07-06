@@ -144,6 +144,25 @@ function recalculateDebateClashes(roomId) {
   persistRoom(roomId);
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────
+// Returns all descendant node IDs (via chain_parent_id) of a given node
+function getDescendants(nodeId, nodes) {
+  const result = [];
+  const queue = [nodeId];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const children = nodes.filter(n => n.chain_parent_id === current && n.id !== nodeId);
+    for (const child of children) {
+      result.push(child.id);
+      queue.push(child.id);
+    }
+  }
+  return result;
+}
+
 // Asynchronous background moderation pipeline
 async function runAsyncPipeline(roomId, nodeId) {
   const room = rooms[roomId];
@@ -278,7 +297,8 @@ wss.on('connection', (ws) => {
 
         case 'chat_message': {
           // Natural free-form chat — AI determines type and connections
-          const { roomId, username, text } = data;
+          // Optional: attackTargetId creates an immediate clash edge
+          const { roomId, username, text, attackTargetId } = data;
           const room = rooms[roomId];
           if (!room) return;
 
@@ -291,7 +311,7 @@ wss.on('connection', (ws) => {
             id: nodeId,
             author: username,
             text,
-            type: 'claim',           // AI will update
+            type: attackTargetId ? 'rebuttal' : 'claim', // pre-classify attacks
             fact_status: 'unverified',
             sources: [],
             fallacy_flags: [],
@@ -299,7 +319,6 @@ wss.on('connection', (ws) => {
             canonical_concept_id: nodeId,
             chain_parent_id: chainParentId,
             timestamp: Date.now(),
-            // AI-populated fields (set after pipeline runs)
             detected_subtopic: false,
             subtopic_label: null,
             contains_factual_claim: false,
@@ -310,8 +329,27 @@ wss.on('connection', (ws) => {
           room.nodes.push(newNode);
           room.messages.push({ id: nodeId, author: username, text, timestamp: Date.now() });
 
+          // If attacking a specific node — create clash edge immediately
+          let clashEdge = null;
+          if (attackTargetId && room.nodes.find(n => n.id === attackTargetId)) {
+            clashEdge = {
+              id: `clash_${nodeId}_${attackTargetId}`,
+              from: nodeId,
+              to: attackTargetId,
+              relation_type: 'attacks',
+              type: 'clash',
+              resolved: false,
+              winner_node_id: null
+            };
+            room.edges.push(clashEdge);
+          }
+
           persistRoom(roomId);
           broadcastToRoom(roomId, 'new_node', newNode);
+          if (clashEdge) {
+            broadcastToRoom(roomId, 'new_edge', clashEdge);
+            broadcastToRoom(roomId, 'edges_updated', room.edges);
+          }
 
           // AI analysis runs in background — updates node type, edges, flags
           runAsyncPipeline(roomId, nodeId);
@@ -349,15 +387,22 @@ wss.on('connection', (ws) => {
           const node = room.nodes.find(n => n.id === nodeId);
           if (!node) return;
 
-          node.conceded = true;
-          node.strength_score = 0;
           console.log(`[Concede] ${node.author} conceded node: ${nodeId}`);
 
+          // Collect all descendants recursively via chain_parent_id
+          const descendantIds = getDescendants(nodeId, room.nodes);
+          const removedIds = [nodeId, ...descendantIds];
+
           const snippet = node.text.length > 80 ? node.text.substring(0, 80) + '...' : node.text;
+
+          // Remove nodes and any edges that touch removed nodes
+          room.nodes = room.nodes.filter(n => !removedIds.includes(n.id));
+          room.edges = room.edges.filter(e => !removedIds.includes(e.from) && !removedIds.includes(e.to));
+
           const aiMsg = {
             id: `ai_${Date.now()}`,
             author: 'Agora AI',
-            text: `🏳️ **${node.author}** has conceded the point: *"${snippet}"*. This argument has been retired from the debate.`,
+            text: `🏳️ **${node.author}** has conceded: *"${snippet}"*${descendantIds.length > 0 ? ` — ${descendantIds.length} follow-up argument${descendantIds.length > 1 ? 's' : ''} also removed.` : ' This argument has been retired.'}`,
             timestamp: Date.now(),
             isAI: true,
             aiType: 'concession'
@@ -367,7 +412,8 @@ wss.on('connection', (ws) => {
           recalculateDebateClashes(roomId);
           persistRoom(roomId);
 
-          broadcastToRoom(roomId, 'node_updated', node);
+          // Broadcast full removal list so all clients vanish the nodes instantly
+          broadcastToRoom(roomId, 'nodes_removed', { ids: removedIds });
           broadcastToRoom(roomId, 'new_ai_message', aiMsg);
           broadcastToRoom(roomId, 'edges_updated', room.edges);
           break;

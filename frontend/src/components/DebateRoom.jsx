@@ -10,7 +10,8 @@ import NudgeModal from './NudgeModal';
 export default function DebateRoom({ roomId, username, onLeave }) {
   const [room, setRoom] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [activeSubtree, setActiveSubtree] = useState(null); // subtreeId | null
+  const [activeSubtree, setActiveSubtree] = useState(null);
+  const [attackTarget, setAttackTarget] = useState(null); // { nodeId, text } | null
 
   // Rephrase Nudge Modal
   const [nudgeData, setNudgeData] = useState(null);
@@ -175,6 +176,20 @@ export default function DebateRoom({ roomId, username, onLeave }) {
             setSummary(data.summary);
             break;
 
+          case 'nodes_removed':
+            // Recursive concession — remove nodes + their edges from local state
+            setRoom(prev => {
+              if (!prev) return null;
+              const ids = new Set(data.ids || []);
+              return {
+                ...prev,
+                nodes: prev.nodes.filter(n => !ids.has(n.id)),
+                edges: prev.edges.filter(e => !ids.has(e.from) && !ids.has(e.to)),
+              };
+            });
+            setSelectedNode(prev => prev && data.ids?.includes(prev.id) ? null : prev);
+            break;
+
           case 'error':
             alert(`Error: ${data.message}`);
             setSummaryLoading(false);
@@ -218,8 +233,14 @@ export default function DebateRoom({ roomId, username, onLeave }) {
     }
   };
 
-  const handleSendMessage = (text) =>
-    send('chat_message', { roomId, username, text });
+  const handleSendMessage = (text, attackTargetId = null) =>
+    send('chat_message', { roomId, username, text, attackTargetId });
+
+  const handleAttackNode = ({ nodeId, text }) => {
+    setAttackTarget({ nodeId, text });
+    // Scroll chat into view if subtree is active
+    setActiveSubtree(null);
+  };
 
   const handleConcedeNode = (nodeId) =>
     send('concede_claim', { roomId, nodeId });
@@ -358,6 +379,10 @@ export default function DebateRoom({ roomId, username, onLeave }) {
             room={room}
             selectedNode={selectedNode}
             setSelectedNode={setSelectedNode}
+            currentUser={username}
+            onConcede={handleConcedeNode}
+            onAttack={handleAttackNode}
+            onOpenSubtree={handleOpenSubtree}
           />
         </div>
 
@@ -402,12 +427,9 @@ export default function DebateRoom({ roomId, username, onLeave }) {
               onSendMessage={handleSendMessage}
               onConcedeNode={handleConcedeNode}
               onFactCheck={handleFactCheck}
-              onOpenSubtree={(parentNodeId, label) => {
-                handleOpenSubtree(parentNodeId, label);
-                // Switch to subtree view once subtree_created arrives
-                // We watch for it via the room.subtrees state update below
-              }}
-              onViewSubtree={(subtreeId) => setActiveSubtree(subtreeId)}
+              onOpenSubtree={handleOpenSubtree}
+              attackTarget={attackTarget}
+              onClearAttack={() => setAttackTarget(null)}
             />
           )}
           <FactCheckTicker room={room} />

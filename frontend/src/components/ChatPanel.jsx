@@ -244,31 +244,74 @@ function MessageBubble({ msg, node, isSelf, onConcede, onFactCheck, onOpenSubtre
 }
 
 // ── Main ChatPanel ────────────────────────────────────────────────────────────
-export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeNode, onFactCheck, onOpenSubtree }) {
+export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeNode, onFactCheck, onOpenSubtree, attackTarget, onClearAttack }) {
   const [text, setText] = useState('');
+  // Optimistic pending messages — shown instantly before server confirms
+  const [pendingMessages, setPendingMessages] = useState([]);
   const chatEndRef = useRef(null);
   const inputRef   = useRef(null);
 
   const { messages = [], nodes = [] } = room || {};
 
+  // De-dupe: when a real new_node arrives from server, remove the matching pending msg
+  // Match by: same author + same text + timestamp within 5 seconds
+  const DEDUP_WINDOW_MS = 5000;
+  const dedupedMessages = (() => {
+    const result = [];
+    const remainingPending = [...pendingMessages];
+
+    for (const msg of messages) {
+      // Try to find a pending message this server message replaces
+      const pendingIdx = remainingPending.findIndex(
+        p =>
+          p.author === msg.author &&
+          p.text   === msg.text   &&
+          Math.abs(p.timestamp - msg.timestamp) < DEDUP_WINDOW_MS
+      );
+      if (pendingIdx !== -1) {
+        // Remove the pending stand-in before adding the real one
+        remainingPending.splice(pendingIdx, 1);
+      }
+      result.push(msg);
+    }
+
+    // Append any still-pending messages not yet confirmed by server
+    return [...result, ...remainingPending];
+  })();
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [dedupedMessages]);
 
   const getNode = (msgId) => nodes.find(n => n.id === msgId);
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSendMessage(trimmed);
+
+    // Optimistic update — add to pending immediately
+    const tempId = `pending_${Date.now()}_${Math.random().toString(36).substr(2,4)}`;
+    const pendingMsg = {
+      id: tempId,
+      author: currentUser,
+      text: trimmed,
+      timestamp: Date.now(),
+      pending: true,
+    };
+    setPendingMessages(prev => [...prev, pendingMsg]);
+
+    // Clean up stale pending messages older than 10s (safety net)
+    setTimeout(() => {
+      setPendingMessages(prev => prev.filter(p => p.id !== tempId));
+    }, 10000);
+
+    onSendMessage(trimmed, attackTarget?.nodeId || null);
     setText('');
+    onClearAttack?.();
     inputRef.current?.focus();
   };
 
@@ -292,7 +335,7 @@ export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeN
 
       {/* Messages list */}
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}>
-        {messages.length === 0 ? (
+        {dedupedMessages.length === 0 ? (
           <div style={{
             display: 'flex', flexDirection: 'column', justifyContent: 'center',
             alignItems: 'center', height: '100%', color: '#475569',
@@ -305,7 +348,27 @@ export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeN
             </span>
           </div>
         ) : (
-          messages.map((msg) => {
+          dedupedMessages.map((msg) => {
+            if (msg.pending) {
+              // Optimistic pending bubble
+              return (
+                <div key={msg.id} style={{
+                  marginBottom: '10px', padding: '10px 14px', borderRadius: '12px',
+                  background: 'rgba(30,41,59,0.25)',
+                  borderLeft: '3px solid rgba(99,102,241,0.4)',
+                  opacity: 0.65,
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                }}>
+                  <span style={{ fontWeight: '700', fontSize: '0.82rem', color: '#60A5FA' }}>
+                    {msg.author} (You)
+                  </span>
+                  <p style={{ fontSize: '0.88rem', color: '#94A3B8', margin: '4px 0 0', lineHeight: '1.5', wordBreak: 'break-word' }}>
+                    {msg.text}
+                  </p>
+                  <span style={{ fontSize: '0.62rem', color: '#475569' }}>sending…</span>
+                </div>
+              );
+            }
             if (msg.isAI) return <AiMessage key={msg.id} msg={msg} />;
             const node = getNode(msg.id);
             return (
@@ -324,6 +387,25 @@ export default function ChatPanel({ room, currentUser, onSendMessage, onConcedeN
         )}
         <div ref={chatEndRef} />
       </div>
+
+      {/* Attack target banner */}
+      {attackTarget && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
+          padding: '7px 12px', marginBottom: '6px',
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: '8px',
+        }}>
+          <span style={{ fontSize: '0.75rem', color: '#F87171', flex: 1, overflow: 'hidden',
+            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ⚔️ Attacking: <em style={{ fontStyle: 'normal', color: '#FCA5A5' }}>&ldquo;{attackTarget.text?.substring(0, 60)}{attackTarget.text?.length > 60 ? '…' : ''}&rdquo;</em>
+          </span>
+          <button onClick={onClearAttack} style={{
+            background: 'none', border: 'none', color: '#64748B',
+            cursor: 'pointer', fontSize: '0.7rem', padding: '0', flexShrink: 0,
+          }}>✕ Cancel</button>
+        </div>
+      )}
 
       {/* Input bar */}
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0 }}>
