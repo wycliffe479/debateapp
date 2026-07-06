@@ -210,54 +210,54 @@ Analyze this message according to the rules and return the results in the requir
       if (/\b(you are|you're|he is|she is|they are)\b.*\b(wrong|stupid|ignorant|unqualified|biased|hypocrite)\b/i.test(messageText)) {
         fallacies.push({
           type: 'Ad Hominem',
-          explanation: 'This argument attacks the person making the claim rather than engaging with the claim itself.',
+          explanation: `This argument attacks the person making the claim rather than engaging with the claim itself.`,
           triggering_quote: messageText.match(/\b(you are|you're|he is|she is|they are)\b.{0,40}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Address the argument directly: what specific reasoning or evidence do you disagree with?'
+          rephrase_suggestion: `Address the argument directly: what specific reasoning or evidence do you disagree with?`
         });
       }
-      // Straw Man: "so you\'re saying", "so you want", "your position means"
+      // Straw Man: "so you're saying", "so you want", "your position means"
       else if (/\b(so you('re| are) saying|so you want|that means you|your position means|you must (want|believe|think))\b/i.test(messageText)) {
         fallacies.push({
           type: 'Straw Man',
-          explanation: 'This argument responds to an exaggerated or distorted version of the opponent's actual position.',
+          explanation: `This argument responds to an exaggerated or distorted version of the opponent's actual position, not what they actually said.`,
           triggering_quote: messageText.match(/\b(so you('re| are) saying|so you want|that means you|your position means|you must (want|believe|think)).{0,50}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Engage with what your opponent actually said rather than an extreme version of their position.'
+          rephrase_suggestion: `Engage with what your opponent actually said rather than an extreme version of their position.`
         });
       }
-      // False Dichotomy: "either...or", "you\'re with us or"
+      // False Dichotomy: "either...or", "you're with us or"
       else if (/\b(either .{1,40} or|you('re| are) either|only two (options|choices)|with us or against)\b/i.test(messageText)) {
         fallacies.push({
           type: 'False Dichotomy',
-          explanation: 'This argument presents only two options as if they are the only possibilities, ignoring alternatives.',
+          explanation: `This argument presents only two options as if they are the only possibilities, ignoring alternatives that exist between or beyond them.`,
           triggering_quote: messageText.match(/\b(either .{1,40} or|you('re| are) either|only two (options|choices)|with us or against).{0,30}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Acknowledge that there may be positions between the two extremes you have presented.'
+          rephrase_suggestion: `Acknowledge that there may be positions between the two extremes you have presented.`
         });
       }
       // Slippery Slope: "will lead to", "next thing", "soon everyone"
       else if (/\b(will (inevitably|eventually) lead to|next thing (you know)?|soon (everyone|we will)|once you allow|first .{1,30} then)\b/i.test(messageText)) {
         fallacies.push({
           type: 'Slippery Slope',
-          explanation: 'This argument assumes one event will inevitably cause an extreme outcome without justifying the causal chain.',
+          explanation: `This argument assumes one event will inevitably cause an extreme outcome without justifying why each step in the causal chain is inevitable.`,
           triggering_quote: messageText.match(/\b(will (inevitably|eventually) lead to|next thing|soon (everyone|we will)|once you allow).{0,40}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Justify each step in the causal chain with evidence rather than asserting inevitability.'
+          rephrase_suggestion: `Justify each step in the causal chain with evidence rather than asserting inevitability.`
         });
       }
-      // Hasty Generalisation: "all", "every", "none of them" after a single example
+      // Hasty Generalisation: "all of them", "every single", "none of them"
       else if (/\b(all of them|every single|none of them|they all|always do this|never do this)\b/i.test(messageText)) {
         fallacies.push({
           type: 'Hasty Generalisation',
-          explanation: 'This argument draws a broad universal conclusion from what appears to be a limited or unrepresentative sample.',
+          explanation: `This argument draws a broad universal conclusion from what appears to be a limited or unrepresentative sample.`,
           triggering_quote: messageText.match(/\b(all of them|every single|none of them|they all|always do this|never do this).{0,30}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Qualify your claim: does your evidence represent a broad enough sample to support this conclusion?'
+          rephrase_suggestion: `Qualify your claim: does your evidence represent a broad enough sample to support this conclusion?`
         });
       }
       // Appeal to Popularity: "millions believe", "everyone knows", "most people agree"
       else if (/\b(millions (of people )?(believe|think|agree)|everyone knows|most people (think|agree|believe)|majority (think|believe|say))\b/i.test(messageText)) {
         fallacies.push({
           type: 'Appeal to Popularity',
-          explanation: 'This argument claims something is true solely because many people believe it, which is not evidence of truth.',
+          explanation: `This argument claims something is true solely because many people believe it, which isn't evidence of truth.`,
           triggering_quote: messageText.match(/\b(millions|everyone knows|most people|majority).{0,40}/i)?.[0] || messageText.substring(0, 60),
-          rephrase_suggestion: 'Provide logical or empirical evidence for the claim rather than relying on how many people hold it.'
+          rephrase_suggestion: `Provide logical or empirical evidence for the claim rather than relying on how many people hold it.`
         });
       }
 
